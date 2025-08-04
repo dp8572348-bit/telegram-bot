@@ -11,6 +11,7 @@ from telegram.ext import (
     filters,
 )
 from flask import Flask  # <-- Nuevo
+import asyncio
 
 # Servidor Flask mínimo para Render
 web_app = Flask(__name__)
@@ -64,10 +65,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Ejecutar bot y Flask juntos
 def run_bot():
+    asyncio.set_event_loop(asyncio.new_event_loop())  # 👈 Añade esta línea
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     print("✅ Bot corriendo...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     threading.Thread(target=run_bot).start()
