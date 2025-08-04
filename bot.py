@@ -1,47 +1,47 @@
 import os
-from telegram import Update, Message
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+import hashlib
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from hashlib import md5
 
-# Cargar variables de entorno
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
 
-# Diccionario para almacenar hashes
+TOKEN = os.getenv("BOT_TOKEN")
 hashes = set()
 
-async def eliminar_repetidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensaje: Message = update.message
-    if not mensaje or not mensaje.chat or not mensaje.from_user:
-        return
+def get_file_hash(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()
 
-    # Obtener el archivo
-    archivo = None
-    if mensaje.photo:
-        archivo = await mensaje.photo[-1].get_file()
-    elif mensaje.video:
-        archivo = await mensaje.video.get_file()
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = None
+    media_type = None
+
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id  # mayor resolución
+        media_type = 'photo'
+    elif update.message.video:
+        file_id = update.message.video.file_id
+        media_type = 'video'
     else:
-        return
+        return  # no es foto ni video
 
-    # Descargar el archivo como bytes
-    contenido = await archivo.download_as_bytearray()
+    file = await context.bot.get_file(file_id)
+    file_bytes = await file.download_as_bytearray()
+    file_hash = get_file_hash(file_bytes)
 
-    # Calcular hash md5
-    archivo_hash = md5(contenido).hexdigest()
-
-    if archivo_hash in hashes:
-        await mensaje.delete()
-        print(f"Archivo repetido eliminado en el grupo {mensaje.chat.id}")
+    if file_hash in hashes:
+        await update.message.delete()
+        print(f"❌ {media_type} duplicado eliminado.")
     else:
-        hashes.add(archivo_hash)
+        hashes.add(file_hash)
+        print(f"✅ {media_type} registrado.")
+
+async def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
+    print("✅ Bot corriendo...")
+    await app.run_polling()
 
 if __name__ == "__main__":
-    print("✅ Bot iniciado. Escuchando mensajes...")
-
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, eliminar_repetidos))
-    
-    # No uses asyncio.run(main()) aquí
-    app.run_polling()
+    import asyncio
+    asyncio.run(main())
