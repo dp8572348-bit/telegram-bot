@@ -5,23 +5,23 @@ from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
-    filters,
     ContextTypes,
+    filters,
 )
 
+# Cargar .env
 load_dotenv()
-
 TOKEN = os.getenv("BOT_TOKEN")
 HASHES_FILE = "hashes.json"
 
-# Cargar hashes guardados (si existen)
+# Cargar hashes previos
 try:
     with open(HASHES_FILE, "r") as f:
         hashes = json.load(f)
 except FileNotFoundError:
     hashes = {}
 
-# Manejador para fotos y videos
+# Manejador de fotos y videos
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     chat_id = str(message.chat_id)
@@ -44,20 +44,21 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if file_unique_id in hashes[chat_id]:
         try:
             await message.delete()
-            print(f"📛 Mensaje de @{user.username} eliminado (repetido)")
+            print(f"🗑️ Mensaje repetido eliminado de @{user.username}")
         except Exception as e:
-            print(f"⚠️ No se pudo eliminar el mensaje: {e}")
+            print(f"⚠️ No se pudo eliminar mensaje: {e}")
     else:
         hashes[chat_id].append(file_unique_id)
         with open(HASHES_FILE, "w") as f:
             json.dump(hashes, f)
 
-async def start_bot():
+# EJECUCIÓN DIRECTA (sin asyncio.run)
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     print("✅ Bot corriendo...")
-    await app.run_polling()  # ¡NO se encierra dentro de asyncio.run ni loops manuales!
+    app.run_polling()  # NO uses asyncio.run() aquí
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(start_bot())
+    main()
+
