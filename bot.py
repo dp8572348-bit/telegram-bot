@@ -1,12 +1,12 @@
 import os
-import hashlib
 import json
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from dotenv import load_dotenv
 
 HASHES_FILE = "hashes.json"
 
-# Cargar hashes desde archivo
+# Cargar hashes guardados (file_unique_id por chat)
 if os.path.exists(HASHES_FILE):
     with open(HASHES_FILE, "r") as f:
         hashes = json.load(f)
@@ -18,61 +18,48 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = message.chat_id
     user = message.from_user
 
-    # Solo grupos
+    # Solo en grupos o supergrupos
     if not message.chat.type in ["group", "supergroup"]:
         return
 
-    file_id = None
+    file_unique_id = None
     if message.photo:
-        # photo viene como lista de tamaños, tomamos la más grande
-        file_id = message.photo[-1].file_id
+        file_unique_id = message.photo[-1].file_unique_id  # Foto tamaño más grande
     elif message.video:
-        file_id = message.video.file_id
+        file_unique_id = message.video.file_unique_id
     else:
         return
 
-    # Descargar archivo
-    file = await context.bot.get_file(file_id)
-    file_path = f"temp_{file_id}"
-    await file.download_to_drive(file_path)
-
-    # Calcular hash SHA256
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
-        file_hash = hashlib.sha256(file_bytes).hexdigest()
-
-    os.remove(file_path)
-
-    # Verificar si hash ya existe para este chat
     chat_hashes = hashes.get(str(chat_id), [])
 
-    if file_hash in chat_hashes:
-        # Archivo repetido: eliminar mensaje
+    if file_unique_id in chat_hashes:
         try:
             await message.delete()
-            print(f"Mensaje de {user.username} eliminado por archivo repetido")
+            print(f"Mensaje de @{user.username if user.username else user.id} eliminado por archivo repetido")
         except Exception as e:
             print(f"No se pudo eliminar mensaje: {e}")
     else:
-        # Guardar nuevo hash
-        chat_hashes.append(file_hash)
+        chat_hashes.append(file_unique_id)
         hashes[str(chat_id)] = chat_hashes
+        # Guardar hashes a disco
         with open(HASHES_FILE, "w") as f:
             json.dump(hashes, f)
 
-
 if __name__ == "__main__":
-    import asyncio
-    from dotenv import load_dotenv
-
     load_dotenv()
     TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        print("ERROR: Debes definir BOT_TOKEN en .env")
+        exit(1)
 
     app = ApplicationBuilder().token(TOKEN).build()
 
     media_filter = filters.PHOTO | filters.VIDEO
-
     app.add_handler(MessageHandler(media_filter, handle_media))
+
+    print("Bot iniciado...")
+    app.run_polling()
+
 
     print("Bot iniciado...")
     app.run_polling()
