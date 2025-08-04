@@ -41,7 +41,7 @@ telegram_app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_me
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    asyncio.run_coroutine_threadsafe(telegram_app.update_queue.put(update), telegram_app.loop)
+    telegram_app.update_queue.put_nowait(update)
     return "ok"
 
 @app.route("/")
