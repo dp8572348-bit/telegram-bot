@@ -1,67 +1,43 @@
+from telegram import Update, Message
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import os
 import hashlib
-from flask import Flask, request, abort
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, MessageHandler, filters
 
-app = Flask(__name__)
+# Diccionario para almacenar hashes de medios por chat
+media_hashes = {}
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN no está definido en variables de entorno")
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message: Message = update.message
+    chat_id = message.chat_id
 
-bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
-
-hashes = set()
-
-def get_file_hash(file_path):
-    with open(file_path, "rb") as f:
-        return hashlib.md5(f.read()).hexdigest()
-
-def handle_media(update, context):
-    message = update.message
-    if not message:
-        return
-
-    file_id = None
+    # Obtener el archivo
+    file = None
     if message.photo:
-        file_id = message.photo[-1].file_id
+        file = await message.photo[-1].get_file()
     elif message.video:
-        file_id = message.video.file_id
-
-    if file_id:
-        file = bot.get_file(file_id)
-        file_path = f"{file_id}.tmp"
-        file.download(file_path)
-
-        media_hash = get_file_hash(file_path)
-        os.remove(file_path)
-
-        if media_hash in hashes:
-            message.delete()
-        else:
-            hashes.add(media_hash)
-
-handler = MessageHandler(filters.PHOTO | filters.VIDEO, handle_media)
-dispatcher.add_handler(handler)
-
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), bot)
-        dispatcher.process_update(update)
-        return "ok"
+        file = await message.video.get_file()
     else:
-        abort(403)
+        return  # Ignorar si no es imagen o video
 
-@app.route("/")
-def index():
-    return "Bot is running!"
+    # Descargar el archivo en bytes
+    file_bytes = await file.download_as_bytearray()
+    media_hash = hashlib.sha256(file_bytes).hexdigest()
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    if chat_id not in media_hashes:
+        media_hashes[chat_id] = set()
+
+    if media_hash in media_hashes[chat_id]:
+        await message.delete()
+        print(f"Archivo duplicado eliminado en chat {chat_id}")
+    else:
+        media_hashes[chat_id].add(media_hash)
+        print(f"Nuevo archivo registrado en chat {chat_id}")
+
+def get_app():
+    token = os.getenv("BOT_TOKEN")
+    app = Application.builder().token(token).build()
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
+    return app
 
 
 
