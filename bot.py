@@ -1,63 +1,47 @@
 import os
-import json
-from telegram import Update
+from telegram import Update, Message
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from dotenv import load_dotenv
+from hashlib import md5
 
-HASHES_FILE = "hashes.json"
+# Cargar variables de entorno
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
 
-# Cargar hashes desde disco
-if os.path.exists(HASHES_FILE):
-    with open(HASHES_FILE, "r") as f:
-        hashes = json.load(f)
-else:
-    hashes = {}
+# Diccionario para almacenar hashes
+hashes = set()
 
-async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    chat_id = str(message.chat_id)
-    user = message.from_user
-
-    # Solo grupos
-    if message.chat.type not in ["group", "supergroup"]:
+async def eliminar_repetidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mensaje: Message = update.message
+    if not mensaje or not mensaje.chat or not mensaje.from_user:
         return
 
-    file_unique_id = None
-    if message.photo:
-        file_unique_id = message.photo[-1].file_unique_id
-    elif message.video:
-        file_unique_id = message.video.file_unique_id
+    # Obtener el archivo
+    archivo = None
+    if mensaje.photo:
+        archivo = await mensaje.photo[-1].get_file()
+    elif mensaje.video:
+        archivo = await mensaje.video.get_file()
     else:
         return
 
-    chat_hashes = hashes.get(chat_id, [])
+    # Descargar el archivo como bytes
+    contenido = await archivo.download_as_bytearray()
 
-    if file_unique_id in chat_hashes:
-        try:
-            await message.delete()
-            print(f"Eliminado mensaje de @{user.username or user.id} por duplicado.")
-        except Exception as e:
-            print(f"No se pudo eliminar el mensaje: {e}")
+    # Calcular hash md5
+    archivo_hash = md5(contenido).hexdigest()
+
+    if archivo_hash in hashes:
+        await mensaje.delete()
+        print(f"Archivo repetido eliminado en el grupo {mensaje.chat.id}")
     else:
-        chat_hashes.append(file_unique_id)
-        hashes[chat_id] = chat_hashes
-        with open(HASHES_FILE, "w") as f:
-            json.dump(hashes, f)
-
-async def main():
-    load_dotenv()
-    TOKEN = os.getenv("BOT_TOKEN")
-    if not TOKEN:
-        print("❌ BOT_TOKEN no definido en .env")
-        return
-
-    app = ApplicationBuilder().token(TOKEN).build()
-    media_filter = filters.PHOTO | filters.VIDEO
-    app.add_handler(MessageHandler(media_filter, handle_media))
-
-    print("✅ Bot iniciado. Escuchando mensajes...")
-    await app.run_polling()
+        hashes.add(archivo_hash)
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    print("✅ Bot iniciado. Escuchando mensajes...")
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, eliminar_repetidos))
+    
+    # No uses asyncio.run(main()) aquí
+    app.run_polling()
