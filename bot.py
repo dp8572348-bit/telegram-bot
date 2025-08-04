@@ -1,44 +1,69 @@
-from telegram import Update, Message
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import os
 import hashlib
+from flask import Flask, request
+from telegram import Update, MessageEntity
+from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-# Diccionario para almacenar hashes de medios por chat
-media_hashes = {}
+TOKEN = os.getenv("BOT_TOKEN")
+APP_URL = os.getenv("APP_URL")  # eg: https://tu-bot.onrender.com
+
+# Almacenamos hashes para evitar duplicados
+known_hashes = set()
+
+app = Flask(__name__)
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message: Message = update.message
-    chat_id = message.chat_id
-
-    # Obtener el archivo
+    message = update.message
     file = None
+
+    # Detecta si es foto
     if message.photo:
-        file = await message.photo[-1].get_file()
+        file = message.photo[-1]
     elif message.video:
-        file = await message.video.get_file()
+        file = message.video
     else:
-        return  # Ignorar si no es imagen o video
+        return
 
-    # Descargar el archivo en bytes
-    file_bytes = await file.download_as_bytearray()
-    media_hash = hashlib.sha256(file_bytes).hexdigest()
-
-    if chat_id not in media_hashes:
-        media_hashes[chat_id] = set()
-
-    if media_hash in media_hashes[chat_id]:
-        await message.delete()
-        print(f"Archivo duplicado eliminado en chat {chat_id}")
+    file_id = file.file_unique_id  # Único por contenido
+    if file_id in known_hashes:
+        try:
+            await message.delete()
+            print(f"Contenido duplicado eliminado.")
+        except Exception as e:
+            print(f"No se pudo eliminar el mensaje: {e}")
     else:
-        media_hashes[chat_id].add(media_hash)
-        print(f"Nuevo archivo registrado en chat {chat_id}")
+        known_hashes.add(file_id)
+        print(f"Contenido nuevo guardado: {file_id}")
 
-def get_app():
-    token = os.getenv("BOT_TOKEN")
-    app = Application.builder().token(token).build()
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
-    return app
+# Inicializa el bot de telegram
+telegram_app = Application.builder().token(TOKEN).build()
+telegram_app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
 
+@app.route(f"/webhook", methods=["POST"])
+def webhook():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+        telegram_app.update_queue.put(update)
+        return "ok"
+
+@app.route("/")
+def index():
+    return "Bot activo"
+
+async def set_webhook():
+    webhook_url = f"{APP_URL}/webhook"
+    await telegram_app.bot.set_webhook(url=webhook_url)
+    print(f"Webhook configurado en {webhook_url}")
+
+if __name__ == "__main__":
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(set_webhook())
+    telegram_app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        webhook_url=f"{APP_URL}/webhook"
+    )
 
 
 if __name__ == "__main__":
