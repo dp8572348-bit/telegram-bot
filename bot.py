@@ -1,65 +1,63 @@
 import os
-import logging
+import json
+from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from collections import defaultdict
-import asyncio
-import hashlib
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-# Obtener el token del bot de las variables de entorno
-TOKEN = os.getenv("BOT_TOKEN")  # Asegúrate de configurarlo en Render
+load_dotenv()
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+TOKEN = os.getenv("BOT_TOKEN")
+HASHES_FILE = "hashes.json"
 
-# Estructura para guardar hashes de archivos por grupo
-file_hashes_by_chat = defaultdict(set)
+# Cargar hashes guardados (si existen)
+try:
+    with open(HASHES_FILE, "r") as f:
+        hashes = json.load(f)
+except FileNotFoundError:
+    hashes = {}
 
-# Función para calcular hash MD5 de un archivo binario
-async def calculate_hash(file):
-    data = await file.download_as_bytearray()
-    return hashlib.md5(data).hexdigest()
-
-# Manejador de mensajes multimedia (fotos y videos)
+# Manejador para fotos y videos
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if not message:
+    message = update.effective_message
+    chat_id = str(message.chat_id)
+    user = message.from_user
+
+    if not message.chat.type in ["group", "supergroup"]:
         return
 
-    file = None
-
+    file_unique_id = None
     if message.photo:
-        file = await message.photo[-1].get_file()
+        file_unique_id = message.photo[-1].file_unique_id
     elif message.video:
-        file = await message.video.get_file()
+        file_unique_id = message.video.file_unique_id
     else:
         return
 
-    file_hash = await calculate_hash(file)
-    chat_id = message.chat_id
+    if chat_id not in hashes:
+        hashes[chat_id] = []
 
-    if file_hash in file_hashes_by_chat[chat_id]:
-        logger.info(f"Archivo duplicado en {chat_id}, eliminando mensaje...")
-        await message.delete()
+    if file_unique_id in hashes[chat_id]:
+        try:
+            await message.delete()
+            print(f"📛 Mensaje de @{user.username} eliminado (repetido)")
+        except Exception as e:
+            print(f"⚠️ No se pudo eliminar el mensaje: {e}")
     else:
-        logger.info(f"Nuevo archivo en {chat_id}, guardando hash.")
-        file_hashes_by_chat[chat_id].add(file_hash)
+        hashes[chat_id].append(file_unique_id)
+        with open(HASHES_FILE, "w") as f:
+            json.dump(hashes, f)
 
-# Función principal
-async def main():
+async def start_bot():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     print("✅ Bot corriendo...")
+    await app.run_polling()  # ¡NO se encierra dentro de asyncio.run ni loops manuales!
 
-    await app.run_polling()
-
-# Manejo del loop para entornos como Render
-if __name__ == '__main__':
-    try:
-        asyncio.get_event_loop().run_until_complete(main())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
-
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(start_bot())
