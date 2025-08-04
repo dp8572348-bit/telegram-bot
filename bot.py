@@ -1,5 +1,7 @@
+# bot.py
 import os
 import json
+import threading
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
@@ -8,6 +10,14 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from flask import Flask  # <-- Nuevo
+
+# Servidor Flask mínimo para Render
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot is running!"
 
 # Cargar .env
 load_dotenv()
@@ -27,7 +37,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(message.chat_id)
     user = message.from_user
 
-    if not message.chat.type in ["group", "supergroup"]:
+    if message.chat.type not in ["group", "supergroup"]:
         return
 
     file_unique_id = None
@@ -52,13 +62,14 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(HASHES_FILE, "w") as f:
             json.dump(hashes, f)
 
-# EJECUCIÓN DIRECTA (sin asyncio.run)
-def main():
+# Ejecutar bot y Flask juntos
+def run_bot():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     print("✅ Bot corriendo...")
-    app.run_polling()  # NO uses asyncio.run() aquí
+    app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_bot).start()
+    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
