@@ -1,75 +1,68 @@
-# bot.py
 import os
-import json
-import threading
-from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-from flask import Flask  # <-- Nuevo
-import asyncio
+import hashlib
+from flask import Flask, request, abort
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, MessageHandler, filters
 
-# Servidor Flask mínimo para Render
-web_app = Flask(__name__)
+app = Flask(__name__)
 
-@web_app.route('/')
-def home():
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN no está definido en variables de entorno")
+
+bot = Bot(token=BOT_TOKEN)
+dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
+
+hashes = set()
+
+def get_file_hash(file_path):
+    with open(file_path, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
+
+def handle_media(update, context):
+    message = update.message
+    if not message:
+        return
+
+    file_id = None
+    if message.photo:
+        file_id = message.photo[-1].file_id
+    elif message.video:
+        file_id = message.video.file_id
+
+    if file_id:
+        file = bot.get_file(file_id)
+        file_path = f"{file_id}.tmp"
+        file.download(file_path)
+
+        media_hash = get_file_hash(file_path)
+        os.remove(file_path)
+
+        if media_hash in hashes:
+            message.delete()
+        else:
+            hashes.add(media_hash)
+
+handler = MessageHandler(filters.PHOTO | filters.VIDEO, handle_media)
+dispatcher.add_handler(handler)
+
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), bot)
+        dispatcher.process_update(update)
+        return "ok"
+    else:
+        abort(403)
+
+@app.route("/")
+def index():
     return "Bot is running!"
 
-# Cargar .env
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-HASHES_FILE = "hashes.json"
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
-# Cargar hashes previos
-try:
-    with open(HASHES_FILE, "r") as f:
-        hashes = json.load(f)
-except FileNotFoundError:
-    hashes = {}
-
-# Manejador de fotos y videos
-async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    chat_id = str(message.chat_id)
-    user = message.from_user
-
-    if message.chat.type not in ["group", "supergroup"]:
-        return
-
-    file_unique_id = None
-    if message.photo:
-        file_unique_id = message.photo[-1].file_unique_id
-    elif message.video:
-        file_unique_id = message.video.file_unique_id
-    else:
-        return
-
-    if chat_id not in hashes:
-        hashes[chat_id] = []
-
-    if file_unique_id in hashes[chat_id]:
-        try:
-            await message.delete()
-            print(f"🗑️ Mensaje repetido eliminado de @{user.username}")
-        except Exception as e:
-            print(f"⚠️ No se pudo eliminar mensaje: {e}")
-    else:
-        hashes[chat_id].append(file_unique_id)
-        with open(HASHES_FILE, "w") as f:
-            json.dump(hashes, f)
-
-# Ejecutar bot y Flask juntos
-def run_bot():
-    asyncio.set_event_loop(asyncio.new_event_loop())  # 👈 Añade esta línea
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
-    print("✅ Bot corriendo...")
-    app.run_polling()
 
 
 if __name__ == "__main__":
